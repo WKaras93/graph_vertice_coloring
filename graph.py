@@ -1,7 +1,7 @@
 import random
 import re
+import time
 from copy import deepcopy
-
 
 class Graph:
     """The Graph class is the main structure that stores the graph as a adjacency list. 
@@ -88,16 +88,17 @@ class GeneticAlgorithm:
             populationSize up number of vertices
             crossoverPropability from 0 to 1 (0.95)
             mutationPropability from 0 to 1 (0.1)
-            limitIteration up 1
-        The default values of the program are given in brackets above.
+            limitIteration up 1.
         """
         self.graph = graph
         self.edges = graph._get_edges()
         self.vertices = graph._get_vertices()
-        self.population_size = param['populationSize'] if param['populationSize'] else len(self.graph._get_vertices())
-        self.crossover_propability = param['crossoverPropability'] if param['crossoverPropability'] else 0.95
-        self.mutation_propability = param['mutationPropability'] if param['mutationPropability'] else 0.1
-        self.limit_iterations = param['limitIteration'] if param['limitIteration'] else 1
+        self.population_size = param['populationSize']
+        self.crossover_propability = param['crossoverPropability']
+        self.crossover_method = param['crossoverMethod']
+        self.mutation_propability = param['mutationPropability']
+        self.limit_iterations = param['limitIteration']
+        self.expected_colors = param['expectedColors']
 
     def _get_number_of_edges(self):
         """Returns number of occurences of edges in the graph."""
@@ -107,34 +108,31 @@ class GeneticAlgorithm:
         """Returns number of occurences of vertices in the graph."""
         return len(self.vertices)
 
-    def assignColorToVertice(self, crossover_method = 'one-point', generate_statistics = False):
-        """
-        The main method supporting the genetic algorithm of vertex coloring. It takes two parameters that are optional.
-        The first 'crossover_method' concerning method of crossing: 'one-point' / 'alternate'. The second paramater 
-        'generate_statistics': False / True calls method writing to the file the best and worst chromosome each population
-        and final best coloring.
-        """
+    def assignColorToVertice(self):
+        """The main method supporting the genetic algorithm of vertex coloring."""
+        start_time = time.time()
         population = self._initialize_population()
+        color_len = self._get_number_of_vertices()
         iteration = 0
         result = []
-        prev_fitness_result = 1
-        current_fitness_result = 0
-        while not self._stop_algorithm(iteration, [current_fitness_result, prev_fitness_result]):
+        while not self._stop_algorithm(iteration, color_len):
             new_population = []
             while len(new_population) < len(population):
                 parents = self._ranking_selection_method(population)
-                if crossover_method == 'alternate':
+                if self.crossover_method == 'alternate':
                     children = self._alternate_crossover(parents)
                 else:
                     children = self._crossover(parents)
                 children = self._mutation(children)
                 new_population.extend(children)
-            population, best_fitness = self._select_new_population(population, new_population)
-            result.append([population[0], best_fitness])
-            if(len(result) >= 2):
-                current_fitness_result = result[-1][1]
-                prev_fitness_result = result[-2][1]
+            population = self._select_new_population(population, new_population)
+            color_len = len(set(population[0].values()))
+            result.append([population[0], color_len])
             iteration += 1
+            print('.') if (iteration % 500 == 0) else 0
+        end_time = time.time()
+        total_time = (end_time - start_time)
+        print(total_time)
         print(iteration)
         return self._get_best_population(result)
 
@@ -147,8 +145,9 @@ class GeneticAlgorithm:
             crossLine = random.randint(1, self._get_number_of_vertices()-2)
             crossover_propability = random.uniform(0, 1)
             if crossover_propability <= self.crossover_propability:
-                first_parent_colors = list(random.choice(parents).values())
-                second_parent_colors = list(random.choice(parents).values())
+                parents_id = random.sample(range(0, int(self.population_size / 2)), 2)
+                first_parent_colors = list(parents[parents_id[0]].values())
+                second_parent_colors = list(parents[parents_id[1]].values())
                 child1 = dict(zip(parent_vertices, first_parent_colors[:crossLine] + second_parent_colors[crossLine:]))
                 child2 = dict(zip(parent_vertices, second_parent_colors[:crossLine] + first_parent_colors[crossLine:]))
                 if self._has_correct_color(child1):
@@ -168,16 +167,16 @@ class GeneticAlgorithm:
         for i in range(2):
             if crossover_propability <= self.crossover_propability:
                 child = {}
-                first_parent_colors = list(random.choice(parents).values())
-                second_parent_colors = list(random.choice(parents).values())
+                parents_id = random.sample(range(0, int(self.population_size / 2)), 2)
+                first_parent_colors = list(parents[parents_id[0]].values())
+                second_parent_colors = list(parents[parents_id[1]].values())
                 for i in range(len(parent_vertices)):
                     if i % 2 == 0 and self._neighbours_have_different_color(parent_vertices[i], first_parent_colors[i], child):
                         child[parent_vertices[i]] = first_parent_colors[i]
                     elif self._neighbours_have_different_color(parent_vertices[i], second_parent_colors[i], child):
                         child[parent_vertices[i]] = second_parent_colors[i]
                     else:
-                        color_palette = [i for i in range(
-                            self._get_number_of_vertices())]
+                        color_palette = [i for i in range(self._get_number_of_vertices())]
                         vertice_color = random.choice(color_palette)
                         while not self._neighbours_have_different_color(parent_vertices[i], vertice_color, child):
                             vertice_color = random.choice(color_palette)
@@ -200,17 +199,22 @@ class GeneticAlgorithm:
         new_fitness_result = self._fitness(current_population)
         population_size = self.population_size
         sum_of_population = dict(zip([i for i in range(
-            population_size * 2)], fitness_result + new_fitness_result))
+            population_size * 2)], new_fitness_result + fitness_result))
         sum_of_population = sorted(sum_of_population.items(), key=lambda kv: (kv[1], kv[0]))
-        fitness_for_best = sum_of_population[0][1]
-        index = [n[0] for n in sum_of_population[:self.population_size]]
+        index = [n[0] for n in sum_of_population]
         new_population = []
         for i in index:
-            if i < population_size:
+            if i < population_size and prev_population[i] not in new_population:
                 new_population.append(prev_population[i])
-            else:
+            elif current_population[i % population_size] not in new_population:
                 new_population.append(current_population[i % population_size])
-        return [new_population, fitness_for_best]
+        while len(new_population) < population_size:
+            id = random.randint(0, 2 * population_size)
+            if id < population_size:
+                new_population.append(prev_population[id])
+            else:
+                new_population.append(current_population[id])
+        return new_population
 
     def _ranking_selection_method(self, population):
         """The method returns the best individuals from population."""
@@ -221,7 +225,7 @@ class GeneticAlgorithm:
         return [population[n] for n in numbers]
 
     def _fitness(self, population):
-        """The method calculates the adjustment of the individual in the population.""" 
+        """The method calculates the adjustment of the individual in the population."""
         colors = [colors for colors in [len(set(genotype.values())) for genotype in population]]
         sum_colors = sum(colors)
         return [color * color * sum_colors for color in colors]
@@ -247,10 +251,9 @@ class GeneticAlgorithm:
         children.sort(key = lambda x: x[1])
         return (children[0][0], len(set(children[0][0].values())))
 
-    def _stop_algorithm(self, numberOfIteration, fitness_populations):
+    def _stop_algorithm(self, numberOfIteration, expected_colors = None):
         """The method stops the algorithm when the condition is met."""
-        difference = abs(fitness_populations[0] - fitness_populations[1])
-        if (numberOfIteration > self.limit_iterations or difference < 0.01 * fitness_populations[0]):
+        if (numberOfIteration > self.limit_iterations or expected_colors == self.expected_colors):
             return True
         else:
             return False
@@ -286,8 +289,11 @@ class SmallestLastAlgorithm:
     
     def assign_color_to_vertices(self):
         """The main method which runs SL algorithm, returns 2 values: graph coloring and number of colors used."""
+        start_time = time.time()
         graph_coloring = self._greedily_coloring(self._sort_vertices_by_degree())
         number_of_colors = len(set(graph_coloring.values()))
+        end_time = time.time()
+        print(end_time - start_time)
         return (graph_coloring, number_of_colors)
 
     def _sort_vertices_by_degree(self):
