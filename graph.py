@@ -1,9 +1,7 @@
 import random
 import re
-import matplotlib.pyplot
-import networkx
+import time
 from copy import deepcopy
-
 
 class Graph:
     """The Graph class is the main structure that stores the graph as a adjacency list. 
@@ -20,27 +18,42 @@ class Graph:
 
     def _load_from_file(self, file_name):
         """
-        This method supports reading graphs from file. File structrue: 
-            v: u, x
-        where exist edge (v, u) and (v, x).
+        This method supports reading graphs from file. File structrue for import the dictionary:
+            v: u, x 
+            where exist edge (v, u) and (v, x).
+        File structure for import edges:
+            e v u
+        where exist edge e means edge and u and v are vertices of edge.
         """
         with open(file_name, 'r') as file:
             for line in file:
                 line = (re.sub('[:,\n]', ' ', line)).split()
-                self.adjacency_list[line[0]] = line[1:]
+                if line[0] == 'e':
+                    self._add_edge(int(line[1]), int(line[2]))
+                else:
+                    self.adjacency_list[line[0]] = line[1:]
         file.close()
+    
+    def _add_edge(self, v, u):
+        if v in self.adjacency_list:
+            self.adjacency_list[v].append(u)
+        else:
+            self.adjacency_list[v] = [u]
+        if u in self.adjacency_list:
+            self.adjacency_list[u].append(v)
+        else:
+            self.adjacency_list[u] = [v]
 
     def _get_vertices(self):
-        """Return all vertices from graph as a list.
-        """
+        """Returns all vertices from graph as a list."""
         return [v for v in self.adjacency_list.keys()]
 
     def _get_edges(self):
-        """Return all edges from graph as a list of pairs."""
+        """Returns all edges from graph as a list of pairs."""
         return [(u, v) for u in self.adjacency_list.keys() for v in self.adjacency_list[u]]
 
     def _get_neighbours(self, vertice):
-        """Return all neighbours passed in as a vertex parameter as a list."""
+        """Returns all neighbours passed in as a vertex parameter as a list."""
         return self.adjacency_list[vertice]
     
     def _is_empty(self):
@@ -48,7 +61,7 @@ class Graph:
         return self.adjacency_list == {}
 
     def _get_vertices_degree(self):
-        """Return degree each vertice of the graph as a dictionary, where the key is the name of vertice
+        """Returns degree each vertice of the graph as a dictionary, where the key is the name of vertice
         and the value is degree."""
         vertices_degree = {}
         for vertice in self._get_vertices():
@@ -75,16 +88,17 @@ class GeneticAlgorithm:
             populationSize up number of vertices
             crossoverPropability from 0 to 1 (0.95)
             mutationPropability from 0 to 1 (0.1)
-            limitIteration up 1
-        The default values of the program are given in brackets above.
+            limitIteration up 1.
         """
         self.graph = graph
         self.edges = graph._get_edges()
         self.vertices = graph._get_vertices()
-        self.population_size = param['populationSize'] if param['populationSize'] else len(self.graph._get_vertices())
-        self.crossover_propability = param['crossoverPropability'] if param['crossoverPropability'] else 0.95
-        self.mutation_propability = param['mutationPropability'] if param['mutationPropability'] else 0.1
-        self.limit_iterations = param['limitIteration'] if param['limitIteration'] else 1
+        self.population_size = param['populationSize']
+        self.crossover_propability = param['crossoverPropability']
+        self.crossover_method = param['crossoverMethod']
+        self.mutation_propability = param['mutationPropability']
+        self.limit_iterations = param['limitIteration']
+        self.expected_colors = param['expectedColors']
 
     def _get_number_of_edges(self):
         """Returns number of occurences of edges in the graph."""
@@ -94,46 +108,48 @@ class GeneticAlgorithm:
         """Returns number of occurences of vertices in the graph."""
         return len(self.vertices)
 
-    def assignColorToVertice(self, crossover_method = 'one-point', generate_statistics = False):
-        """
-        The main method supporting the genetic algorithm of vertex coloring. It takes two parameters that are optional.
-        The first 'crossover_method' concerning method of crossing: 'one-point' / 'alternate'. The second paramater 
-        'generate_statistics': False / True calls method writing to the file the best and worst chromosome each population
-        and final best coloring.
-        """
+    def assignColorToVertice(self):
+        """The main method supporting the genetic algorithm of vertex coloring."""
+        start_time = time.time()
         population = self._initialize_population()
+        color_len = self._get_number_of_vertices()
         iteration = 0
         result = []
-        while not self._stop_algorithm(iteration):
+        while not self._stop_algorithm(iteration, color_len):
             new_population = []
             while len(new_population) < len(population):
-                parents = self._selection(population)
-                if crossover_method == 'alternate':
+                parents = self._ranking_selection_method(population)
+                if self.crossover_method == 'alternate':
                     children = self._alternate_crossover(parents)
                 else:
                     children = self._crossover(parents)
                 children = self._mutation(children)
                 new_population.extend(children)
             population = self._select_new_population(population, new_population)
-            result.append(population[0])
+            color_len = len(set(population[0].values()))
+            result.append([population[0], color_len])
             iteration += 1
+            print('.') if (iteration % 500 == 0) else 0
+        end_time = time.time()
+        total_time = (end_time - start_time)
+        print(total_time)
+        print(iteration)
         return self._get_best_population(result)
 
     def _crossover(self, parents):
         """The method supporting one-point crossover, takes one parameter - a dictionary of candidates for parents.
         Returns dictionary with 2 elements."""
-        crossLine = random.randint(1, self._get_number_of_vertices()-2)
-        parent_vertices = list(random.choice(parents).keys())
+        parent_vertices = parents[0].keys()
         children = []
         while len(children) < 2:
+            crossLine = random.randint(1, self._get_number_of_vertices()-2)
             crossover_propability = random.uniform(0, 1)
             if crossover_propability <= self.crossover_propability:
-                first_parent_colors = list(random.choice(parents).values())
-                second_parent_colors = list(random.choice(parents).values())
-                child1 = dict(
-                    zip(parent_vertices, first_parent_colors[:crossLine] + second_parent_colors[crossLine:]))
-                child2 = dict(
-                    zip(parent_vertices, second_parent_colors[:crossLine] + first_parent_colors[crossLine:]))
+                parents_id = random.sample(range(0, int(self.population_size / 2)), 2)
+                first_parent_colors = list(parents[parents_id[0]].values())
+                second_parent_colors = list(parents[parents_id[1]].values())
+                child1 = dict(zip(parent_vertices, first_parent_colors[:crossLine] + second_parent_colors[crossLine:]))
+                child2 = dict(zip(parent_vertices, second_parent_colors[:crossLine] + first_parent_colors[crossLine:]))
                 if self._has_correct_color(child1):
                     children.append(child1)
                 elif self._has_correct_color(child2):
@@ -146,27 +162,28 @@ class GeneticAlgorithm:
         """The method supporting alternate crossover, takes one parameter - a list of candidates for parents.
         Returns dictionary with 2 elements."""
         crossover_propability = random.uniform(0, 1)
-        parent_vertices = list(random.choice(parents).keys())
+        parent_vertices = list(parents[0].keys())
         children = []
         for i in range(2):
             if crossover_propability <= self.crossover_propability:
                 child = {}
-                first_parent_colors = list(random.choice(parents).values())
-                second_parent_colors = list(random.choice(parents).values())
+                parents_id = random.sample(range(0, int(self.population_size / 2)), 2)
+                first_parent_colors = list(parents[parents_id[0]].values())
+                second_parent_colors = list(parents[parents_id[1]].values())
                 for i in range(len(parent_vertices)):
                     if i % 2 == 0 and self._neighbours_have_different_color(parent_vertices[i], first_parent_colors[i], child):
                         child[parent_vertices[i]] = first_parent_colors[i]
                     elif self._neighbours_have_different_color(parent_vertices[i], second_parent_colors[i], child):
                         child[parent_vertices[i]] = second_parent_colors[i]
                     else:
-                        color_palette = [i for i in range(
-                            self._get_number_of_vertices())]
+                        color_palette = [i for i in range(self._get_number_of_vertices())]
                         vertice_color = random.choice(color_palette)
                         while not self._neighbours_have_different_color(parent_vertices[i], vertice_color, child):
                             vertice_color = random.choice(color_palette)
                         child[parent_vertices[i]] = vertice_color
                 children.append(child)
-            children.append(random.choice(parents))
+            else:
+                children.append(random.choice(parents))
         return children
 
     def _neighbours_have_different_color(self, vertice_name, vertice_color, child):
@@ -182,37 +199,36 @@ class GeneticAlgorithm:
         new_fitness_result = self._fitness(current_population)
         population_size = self.population_size
         sum_of_population = dict(zip([i for i in range(
-            population_size * 2)], fitness_result + new_fitness_result))
+            population_size * 2)], new_fitness_result + fitness_result))
         sum_of_population = sorted(sum_of_population.items(), key=lambda kv: (kv[1], kv[0]))
-        index = [n[0] for n in sum_of_population[:self.population_size]]
+        index = [n[0] for n in sum_of_population]
         new_population = []
         for i in index:
-            if i < population_size:
+            if i < population_size and prev_population[i] not in new_population:
                 new_population.append(prev_population[i])
-            else:
+            elif current_population[i % population_size] not in new_population:
                 new_population.append(current_population[i % population_size])
+        while len(new_population) < population_size:
+            id = random.randint(0, 2 * population_size)
+            if id < population_size:
+                new_population.append(prev_population[id])
+            else:
+                new_population.append(current_population[id])
         return new_population
-
-    def _selection(self, population):
-        return self._ranking_selection_method(population)
 
     def _ranking_selection_method(self, population):
         """The method returns the best individuals from population."""
         fitness_result = self._fitness(population)
-        fitness_result = dict(zip(
-            [i for i in range(self.population_size)], fitness_result))
+        fitness_result = dict(zip([i for i in range(self.population_size)], fitness_result))
         sorted_fitness = sorted(fitness_result.items(), key=lambda kv: (kv[1], kv[0]))
         numbers = [n[0] for n in sorted_fitness[:int(self.population_size/2)]]
         return [population[n] for n in numbers]
 
-    def _roulette_selection_method(self, population):
-        pass
-
     def _fitness(self, population):
-        """The method calculates the adjustment of the individual in the population.""" 
-        colors = [colors for colors in [len(set(chromosme.values())) for chromosme in population]]
+        """The method calculates the adjustment of the individual in the population."""
+        colors = [colors for colors in [len(set(genotype.values())) for genotype in population]]
         sum_colors = sum(colors)
-        return [color/sum_colors for color in colors]
+        return [color * color * sum_colors for color in colors]
 
     def _mutation(self, children):
         """This method mutates passed on individuals."""
@@ -232,16 +248,12 @@ class GeneticAlgorithm:
 
     def _get_best_population(self, children):
         """Returns the best individual from set."""
-        fitness_result = self._fitness(children)
-        fitness_result = dict(
-            zip([i for i in range(self.population_size)], fitness_result))
-        sorted_fitness = sorted(fitness_result.items(),
-                             key=lambda kv: (kv[1], kv[0]))
-        return (children[sorted_fitness[0][0]], len(set(children[sorted_fitness[0][0]].values())))
+        children.sort(key = lambda x: x[1])
+        return (children[0][0], len(set(children[0][0].values())))
 
-    def _stop_algorithm(self, numberOfIteration): #TODO
+    def _stop_algorithm(self, numberOfIteration, expected_colors = None):
         """The method stops the algorithm when the condition is met."""
-        if (numberOfIteration > self.limit_iterations):
+        if (numberOfIteration > self.limit_iterations or expected_colors == self.expected_colors):
             return True
         else:
             return False
@@ -274,6 +286,15 @@ class SmallestLastAlgorithm:
         """The method retrives one parameters, it is a class graph object."""
         self.graph = graph
         self.graph_length = len(self.graph._get_vertices())
+    
+    def assign_color_to_vertices(self):
+        """The main method which runs SL algorithm, returns 2 values: graph coloring and number of colors used."""
+        start_time = time.time()
+        graph_coloring = self._greedily_coloring(self._sort_vertices_by_degree())
+        number_of_colors = len(set(graph_coloring.values()))
+        end_time = time.time()
+        print(end_time - start_time)
+        return (graph_coloring, number_of_colors)
 
     def _sort_vertices_by_degree(self):
         """This method returns a stack in which the vertices with the smallest degrees are added first."""
@@ -300,46 +321,3 @@ class SmallestLastAlgorithm:
                 color += 1
             vertices_color[coloring_vertice] = color
         return vertices_color
-    
-    def assign_color_to_vertices(self):
-        return self._greedily_coloring(self._sort_vertices_by_degree())
-
-
-# class GraphicResult:
-#     """GraphicResult is a class that graphically presents the result of graph coloring."""
-#     def __init__(self, graph, colored_vertices):
-#         self.colored_vertices = colored_vertices
-#         self.graph = networkx.Graph()
-#         self.number_colors = len(graph._get_vertices())
-#         for vertice in graph._get_vertices():
-#             self.graph.add_node(vertice)
-#         for edge in graph._get_edges():
-#             self.graph.add_edge(edge[0], edge[1])
-#         self.run()
-    
-#     def run(self):
-#         color_set = self._generate_colors_set()
-#         color_map = []
-#         for vertice in self.graph.node:
-#             color_map.append(color_set[self.colored_vertices[vertice]])
-#         networkx.draw(self.graph, node_color = color_map, with_labels = True)
-#         matplotlib.pyplot.show()
-    
-#     def _generate_colors_set(self):
-#         colors = []
-#         r = random.randint(0, 255)
-#         g = random.randint(0, 255)
-#         b = random.randint(0, 255)
-#         step = int(255 / self.number_colors)
-#         while len(colors) < self.number_colors:
-#             r += step
-#             g += step
-#             b += step
-#             r_hex = hex(r)[2:]
-#             g_hex = hex(g)[2:]
-#             b_hex = hex(b)[2:]
-#             colors.append('#' + r_hex + g_hex + b_hex)
-#             set(colors)
-#         return colors
-
-
